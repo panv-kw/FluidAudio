@@ -1,9 +1,15 @@
 import CoreML
 import OSLog
 
+// Ideally this would be a non-copyable struct, but there are lots of missing language features
+// and compiler bugs with non-copyable types at the moment. Something to consider for the future
+// as language and compiler support improves.
+
 /// Models required for diarization.
 ///
-internal struct DiarizationModels {
+/// Do not share model instances between ``DiarizerManager`` instances.
+///
+public final class DiarizerModels {
 
     private static var SegmentationModelFileName: String { "pyannote_segmentation.mlmodelc" }
     private static var EmbeddingModelFileName: String { "wespeaker.mlmodelc" }
@@ -30,21 +36,29 @@ internal struct DiarizationModels {
         self.downloadTime = downloadTime
         self.compilationTime = compilationTime
     }
+
+    /// The default configuration to use when loading models.
+    /// 
+    private static var DefaultConfiguration: MLModelConfiguration {
+        let config = MLModelConfiguration()
+        config.computeUnits = .cpuAndNeuralEngine
+        return config
+    }
 }
 
 // ---------------------------
 // MARK: - Downloading models.
 // ---------------------------
 
-extension DiarizationModels {
+extension DiarizerModels {
 
-    private static var HuggingFaceRepoPath: String { "bweng/speaker-diarization-coreml" }
+    private static var HuggingFaceRepoPath: String { "FluidInference/speaker-diarization-coreml" }
 
-    /// Download the models, if needed, to a directory managed by the framework.
+    /// Load the models from a directory managed by the framework, downloading them if needed.
     ///
-    public static func download(
-        logger: Logger
-    ) async throws -> DiarizationModels {
+    public static func downloadIfNeeded(
+        configuration: MLModelConfiguration? = nil
+    ) async throws -> DiarizerModels {
 
         let directory: URL
         #if os(iOS)
@@ -57,15 +71,17 @@ extension DiarizationModels {
             directory = appSupport.appendingPathComponent("SpeakerKitModels/coreml", isDirectory: true)
         #endif
 
-        return try await download(to: directory, logger: logger)
+        return try await downloadIfNeeded(to: directory, configuration: configuration)
     }
 
-    /// Download the models, if needed, to the given directory.
+    /// Load the models from the given directory, downloading them if needed.
     ///
-    public static func download(
+    public static func downloadIfNeeded(
         to modelsDirectory: URL,
-        logger: Logger
-    ) async throws -> DiarizationModels {
+        configuration: MLModelConfiguration? = nil
+    ) async throws -> DiarizerModels {
+
+        let logger = Logger(subsystem: "com.fluidinfluence.diarizer", category: "DiarizerModels")
 
         try deleteNoncompiledModels(modelsDirectory: modelsDirectory, logger)
 
@@ -79,15 +95,25 @@ extension DiarizationModels {
             modelPaths = try await downloadModelsIfNeeded(to: modelsDirectory, logger)
         }
 
+        let configuration = configuration ?? DiarizerModels.DefaultConfiguration
+
         var models: (segmentation: MLModel, embedding: MLModel)!
         let compilationTime = try await ContinuousClock().measure {
             models = try await loadModelsWithAutoRecovery(
                 segmentationURL: modelPaths.segmentationPath,
-                embeddingURL: modelPaths.embeddingPath
+                embeddingURL: modelPaths.embeddingPath,
+                configuration: configuration
             )
         }
 
-        return DiarizationModels(
+        func format(_ d: Duration) -> String {
+            d.formatted(.time(pattern: .minuteSecond(padMinuteToLength: 0, fractionalSecondsLength: 3)))
+        }
+        logger.info(
+            "Models loaded successfully in \(format(downloadTime + compilationTime)) (download: \(format(downloadTime)), compilation: \(format(compilationTime))"
+        )
+
+        return DiarizerModels(
             segmentationModel: models.segmentation,
             embeddingModel: models.embedding,
             paths: modelPaths,
@@ -206,17 +232,15 @@ extension DiarizationModels {
     private static func loadModelsWithAutoRecovery(
         segmentationURL: URL,
         embeddingURL: URL,
+        configuration: MLModelConfiguration,
         maxRetries: Int = 2
     ) async throws -> (segmentation: MLModel, embedding: MLModel) {
 
         assert(segmentationURL.isFileURL, "This should be a file URL to a downloaded model")
         assert(embeddingURL.isFileURL, "This should be a file URL to a downloaded model")
 
-        let config = MLModelConfiguration()
-        config.computeUnits = .cpuAndNeuralEngine
-
         async let segmentationModel = DownloadUtils.withAutoRecovery {
-            try MLModel(contentsOf: segmentationURL, configuration: config)
+            try MLModel(contentsOf: segmentationURL, configuration: configuration)
         } recovery: {
             try await DownloadUtils.performModelRecovery(
                 modelPaths: [segmentationURL],
@@ -231,7 +255,7 @@ extension DiarizationModels {
         }
 
         async let embeddingModel = DownloadUtils.withAutoRecovery {
-            try MLModel(contentsOf: embeddingURL, configuration: config)
+            try MLModel(contentsOf: embeddingURL, configuration: configuration)
         } recovery: {
             try await DownloadUtils.performModelRecovery(
                 modelPaths: [embeddingURL],
@@ -253,32 +277,32 @@ extension DiarizationModels {
 // MARK: - Predownloaded models.
 // -----------------------------
 
-extension DiarizationModels {
+extension DiarizerModels {
 
-    /// Loads the models from the given local files.
+    /// Load the models from the given local files.
     ///
     /// If the models fail to load, no recovery will be attempted. No models are downloaded.
     ///
     public static func load(
         localSegmentationModel: URL,
-        localEmbeddingModel: URL
-    ) throws -> DiarizationModels {
+        localEmbeddingModel: URL,
+        configuration: MLModelConfiguration? = nil
+    ) throws -> DiarizerModels {
 
         guard localEmbeddingModel.isFileURL, localEmbeddingModel.isFileURL else {
             throw LoadingErrors.notAFileURL
         }
 
-        let config = MLModelConfiguration()
-        config.computeUnits = .cpuAndNeuralEngine
+        let configuration = configuration ?? DiarizerModels.DefaultConfiguration
 
         var segmentationModel: MLModel!
         var embeddingModel: MLModel!
         let compilationTime = try ContinuousClock().measure {
-            segmentationModel = try MLModel(contentsOf: localSegmentationModel, configuration: config)
-            embeddingModel    = try MLModel(contentsOf: localEmbeddingModel, configuration: config)
+            segmentationModel = try MLModel(contentsOf: localSegmentationModel, configuration: configuration)
+            embeddingModel    = try MLModel(contentsOf: localEmbeddingModel, configuration: configuration)
         }
 
-        return DiarizationModels(
+        return DiarizerModels(
             segmentationModel: segmentationModel,
             embeddingModel: embeddingModel,
             paths: ModelPaths(segmentationPath: localSegmentationModel, embeddingPath: localEmbeddingModel),

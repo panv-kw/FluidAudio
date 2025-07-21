@@ -261,7 +261,7 @@ public final class DiarizerManager {
     private let logger = Logger(subsystem: "com.fluidinfluence.diarizer", category: "Diarizer")
     private let config: DiarizerConfig
 
-    private var models: DiarizationModels?
+    private var models: DiarizerModels?
 
     public init(config: DiarizerConfig = .default) {
         self.config = config
@@ -283,9 +283,9 @@ public final class DiarizerManager {
         let initializeDuration = try await ContinuousClock().measure {
             if let customDirectory = config.modelCacheDirectory {
                 let subdir = customDirectory.appendingPathComponent("coreml", isDirectory: true)
-                self.models = try await .download(to: subdir, logger: logger)
+                self.models = try await .downloadIfNeeded(to: subdir)
             } else {
-                self.models = try await .download(logger: logger)
+                self.models = try await .downloadIfNeeded()
             }
         }
 
@@ -297,6 +297,12 @@ public final class DiarizerManager {
         )
     }
 
+    /// Clean up resources
+    public func cleanup() {
+        models = nil
+        logger.info("Diarization resources cleaned up")
+    }
+
     /// Download required models for diarization
     public func downloadModels() async throws -> ModelPaths {
         try await initialize()
@@ -305,7 +311,7 @@ public final class DiarizerManager {
 
     private func getSegments(audioChunk: ArraySlice<Float>, chunkSize: Int = 160_000) throws -> [[[Float]]] {
 
-        guard let models else {
+        guard let segmentationModel = models?.segmentationModel else {
             throw DiarizerError.notInitialized
         }
 
@@ -324,7 +330,7 @@ public final class DiarizerManager {
 
         let input = try MLDictionaryFeatureProvider(dictionary: ["audio": audioArray])
 
-        let output = try models.segmentationModel.prediction(from: input)
+        let output = try segmentationModel.prediction(from: input)
 
         guard let segmentOutput = output.featureValue(for: "segments")?.multiArrayValue else {
             throw DiarizerError.processingFailed("Missing segments output from segmentation model")
@@ -803,7 +809,7 @@ public final class DiarizerManager {
         let embeddingStartTime = Date()
 
         // Step 2: Get embeddings using same segmentation results
-        guard let models else {
+        guard let embeddingModel = models?.embeddingModel else {
             throw DiarizerError.notInitialized
         }
 
@@ -811,7 +817,7 @@ public final class DiarizerManager {
             audioChunk: paddedChunk,
             binarizedSegments: binarizedSegments,
             slidingWindowFeature: slidingFeature,
-            embeddingModel: models.embeddingModel,
+            embeddingModel: embeddingModel,
             sampleRate: sampleRate
         )
 
@@ -1040,11 +1046,5 @@ public final class DiarizerManager {
             endTimeSeconds: Float(endTime),
             qualityScore: quality
         )
-    }
-
-    /// Clean up resources
-    public func cleanup() {
-        models = nil
-        logger.info("Diarization resources cleaned up")
     }
 }
