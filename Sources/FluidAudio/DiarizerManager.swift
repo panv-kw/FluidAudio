@@ -9,7 +9,6 @@ public struct DiarizerConfig: Sendable {
     public var numClusters: Int = -1  // Number of speakers to detect (-1 = auto-detect)
     public var minActivityThreshold: Float = 10.0  // Minimum activity threshold (frames) for speaker to be considered active
     public var debugMode: Bool = false
-    public var modelCacheDirectory: URL?
 
     public static let `default` = DiarizerConfig()
     
@@ -21,8 +20,7 @@ public struct DiarizerConfig: Sendable {
         minDurationOff: 0.5,
         numClusters: -1,
         minActivityThreshold: 10.0,
-        debugMode: false,
-        modelCacheDirectory: nil
+        debugMode: false
     )
     #endif
 
@@ -32,8 +30,7 @@ public struct DiarizerConfig: Sendable {
         minDurationOff: Float = 0.5,
         numClusters: Int = -1,
         minActivityThreshold: Float = 10.0,
-        debugMode: Bool = false,
-        modelCacheDirectory: URL? = nil
+        debugMode: Bool = false
     ) {
         self.clusteringThreshold = clusteringThreshold
         self.minDurationOn = minDurationOn
@@ -41,7 +38,6 @@ public struct DiarizerConfig: Sendable {
         self.numClusters = numClusters
         self.minActivityThreshold = minActivityThreshold
         self.debugMode = debugMode
-        self.modelCacheDirectory = modelCacheDirectory
     }
 }
 
@@ -276,37 +272,20 @@ public final class DiarizerManager {
         models.map { ($0.downloadTime.timeInterval, $0.compilationTime.timeInterval) } ?? (0, 0)
     }
 
-    public func initialize() async throws {
-
+    public func initialize(models: consuming DiarizerModels) {
         logger.info("Initializing diarization system")
+        self.models = consume models
+    }
 
-        let initializeDuration = try await ContinuousClock().measure {
-            if let customDirectory = config.modelCacheDirectory {
-                let subdir = customDirectory.appendingPathComponent("coreml", isDirectory: true)
-                self.models = try await .downloadIfNeeded(to: subdir)
-            } else {
-                self.models = try await .downloadIfNeeded()
-            }
-        }
-
-        func format(_ d: Duration) -> String {
-            d.formatted(.time(pattern: .minuteSecond(padMinuteToLength: 0, fractionalSecondsLength: 3)))
-        }
-        logger.info(
-            "Diarization system initialized successfully in \(format(initializeDuration)) (download: \(format(self.models!.downloadTime)), compilation: \(format(self.models!.compilationTime))"
-        )
+    @available(*, deprecated, message: "Use initialize(models:) instead")
+    public func initialize() async throws {
+        self.initialize(models: try await .downloadIfNeeded())
     }
 
     /// Clean up resources
     public func cleanup() {
         models = nil
         logger.info("Diarization resources cleaned up")
-    }
-
-    /// Download required models for diarization
-    public func downloadModels() async throws -> ModelPaths {
-        try await initialize()
-        return models!.paths
     }
 
     private func getSegments(audioChunk: ArraySlice<Float>, chunkSize: Int = 160_000) throws -> [[[Float]]] {
@@ -707,8 +686,6 @@ public final class DiarizerManager {
 
         return (embeddings[maxActivityIndex], normalizedActivity)
     }
-
-    // MARK: - Cleanup
 
     // MARK: - Combined Efficient Diarization
 
