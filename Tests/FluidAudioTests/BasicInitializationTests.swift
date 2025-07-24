@@ -34,7 +34,6 @@ final class BasicInitializationTests: XCTestCase {
         XCTAssertEqual(defaultConfig.minDurationOff, 0.5, accuracy: 0.01)
         XCTAssertEqual(defaultConfig.numClusters, -1)
         XCTAssertFalse(defaultConfig.debugMode)
-        XCTAssertNil(defaultConfig.modelCacheDirectory)
     }
 }
 
@@ -367,7 +366,7 @@ final class CoreMLBackendIntegrationTests: XCTestCase {
         let diarizer = DiarizerManager(config: config)
 
         do {
-            try await diarizer.initialize()
+            diarizer.initialize(models: try await .downloadIfNeeded())
             XCTAssertTrue(diarizer.isAvailable, "Should be available after successful initialization")
             print("✅ CoreML diarizer initialized successfully!")
 
@@ -395,7 +394,7 @@ final class CoreMLBackendIntegrationTests: XCTestCase {
 
         do {
             // Initialize to download models
-            try await manager.initialize()
+            manager.initialize(models: try await .downloadIfNeeded())
 
             // Get model paths (this is implementation specific)
             // For CoreML, we'll test that the manager initializes properly
