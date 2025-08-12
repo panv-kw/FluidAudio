@@ -130,7 +130,7 @@ extension DiarizerModels {
         localSegmentationModel: URL,
         localEmbeddingModel: URL,
         configuration: MLModelConfiguration? = nil
-    ) async throws -> DiarizerModels {
+    ) throws -> DiarizerModels {
 
         let logger = Logger(subsystem: "FluidAudio", category: "DiarizerModels")
         logger.info("Loading predownloaded models")

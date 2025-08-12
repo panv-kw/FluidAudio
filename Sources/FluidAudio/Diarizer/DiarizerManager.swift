@@ -132,6 +132,14 @@ public final class DiarizerManager {
     ) throws
         -> DiarizationResult
     {
+        try performCompleteDiarization(samples[...], sampleRate: sampleRate)
+    }
+
+    public func performCompleteDiarization(
+        _ samples: ArraySlice<Float>, sampleRate: Int = 16000
+    ) throws
+        -> DiarizationResult
+    {
         guard let models else {
             throw DiarizerError.notInitialized
         }
